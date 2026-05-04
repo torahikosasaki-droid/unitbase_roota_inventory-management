@@ -11,9 +11,9 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { AlertBadge } from '@/components/inventory/StockAlert'
 import { maskImei } from '@/lib/imei'
 import { toast } from 'sonner'
-import type { AppUser, Booth, SheetRow, UserRole } from '@/types/inventory'
+import type { AppUser, Booth, SheetRow, UserRole, SafetyStockSetting } from '@/types/inventory'
 
-type Tab = 'users' | 'booths' | 'connection' | 'logs'
+type Tab = 'users' | 'booths' | 'safety-stock' | 'connection' | 'logs'
 
 // ----------------------------------------------------------------
 // Users tab
@@ -63,6 +63,7 @@ function UsersTab() {
   }
 
   const handleDelete = async (id: string, userName: string) => {
+    if (!window.confirm(`「${userName}」を削除しますか？`)) return
     try {
       const res = await fetch(`/api/settings/users?id=${id}`, { method: 'DELETE' })
       if (!res.ok) throw new Error()
@@ -227,6 +228,7 @@ function BoothsTab() {
   }
 
   const handleDelete = async (id: string, name: string) => {
+    if (!window.confirm(`ブース「${name}」を削除しますか？`)) return
     try {
       const res = await fetch(`/api/settings/booths?id=${id}`, { method: 'DELETE' })
       if (!res.ok) throw new Error()
@@ -270,6 +272,209 @@ function BoothsTab() {
           {booths.length === 0 && (
             <div className="px-4 py-6 text-center text-sm text-slate-400">ブースがありません</div>
           )}
+        </div>
+      )}
+    </div>
+  )
+}
+
+// ----------------------------------------------------------------
+// Safety stock tab
+// ----------------------------------------------------------------
+function SafetyStockTab() {
+  const [settings, setSettings] = useState<SafetyStockSetting[]>([])
+  const [booths, setBooths] = useState<Booth[]>([])
+  const [loading, setLoading] = useState(true)
+  const [showForm, setShowForm] = useState(false)
+  const [form, setForm] = useState({ boothId: '', mainCategory: '', subCategory: '', threshold: '' })
+  const [editingId, setEditingId] = useState<string | null>(null)
+  const [editValue, setEditValue] = useState('')
+
+  const load = useCallback(async () => {
+    setLoading(true)
+    try {
+      const [ssRes, boothRes] = await Promise.all([
+        fetch('/api/settings/safety-stock'),
+        fetch('/api/settings/booths'),
+      ])
+      const [ssData, boothData] = await Promise.all([ssRes.json(), boothRes.json()])
+      setSettings(ssData.settings)
+      setBooths(boothData.booths)
+    } catch {
+      toast.error('データの取得に失敗しました')
+    } finally {
+      setLoading(false)
+    }
+  }, [])
+
+  useEffect(() => { load() }, [load])
+
+  const handleAdd = async () => {
+    if (!form.boothId || !form.mainCategory || !form.threshold) {
+      toast.error('ブース・大カテゴリー・基準台数を入力してください')
+      return
+    }
+    try {
+      const res = await fetch('/api/settings/safety-stock', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          boothId: form.boothId,
+          mainCategory: form.mainCategory,
+          subCategory: form.subCategory || undefined,
+          threshold: parseInt(form.threshold, 10),
+        }),
+      })
+      if (!res.ok) throw new Error()
+      toast.success('安全在庫を追加しました')
+      setForm({ boothId: '', mainCategory: '', subCategory: '', threshold: '' })
+      setShowForm(false)
+      await load()
+    } catch {
+      toast.error('追加に失敗しました')
+    }
+  }
+
+  const handleSaveThreshold = async (id: string) => {
+    const v = parseInt(editValue, 10)
+    if (isNaN(v) || v < 0) { toast.error('正の整数を入力してください'); return }
+    try {
+      const res = await fetch(`/api/settings/safety-stock?id=${id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ threshold: v }),
+      })
+      if (!res.ok) throw new Error()
+      toast.success('更新しました')
+      setEditingId(null)
+      await load()
+    } catch {
+      toast.error('更新に失敗しました')
+    }
+  }
+
+  const handleDelete = async (id: string) => {
+    try {
+      const res = await fetch(`/api/settings/safety-stock?id=${id}`, { method: 'DELETE' })
+      if (!res.ok) throw new Error()
+      toast.success('削除しました')
+      await load()
+    } catch {
+      toast.error('削除に失敗しました')
+    }
+  }
+
+  const boothName = (id: string) => booths.find((b) => b.id === id)?.name ?? id
+
+  return (
+    <div className="flex flex-col gap-4">
+      <div className="flex items-center justify-between">
+        <p className="text-xs text-slate-500">チームごとの基準在庫台数を設定します</p>
+        <Button size="sm" className="text-xs" onClick={() => setShowForm(!showForm)}>
+          {showForm ? 'キャンセル' : '+ 追加'}
+        </Button>
+      </div>
+
+      {showForm && (
+        <Card className="border-slate-200 bg-slate-50">
+          <CardContent className="px-4 pt-4 pb-4 flex flex-col gap-3">
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <Label className="text-xs text-slate-600">ブース</Label>
+                <select
+                  value={form.boothId}
+                  onChange={(e) => setForm((f) => ({ ...f, boothId: e.target.value }))}
+                  className="mt-1 w-full text-sm border border-slate-200 rounded px-2 py-1.5 bg-white"
+                >
+                  <option value="">選択してください</option>
+                  {booths.map((b) => <option key={b.id} value={b.id}>{b.name}</option>)}
+                </select>
+              </div>
+              <div>
+                <Label className="text-xs text-slate-600">基準台数</Label>
+                <Input
+                  type="number"
+                  min="0"
+                  value={form.threshold}
+                  onChange={(e) => setForm((f) => ({ ...f, threshold: e.target.value }))}
+                  placeholder="例: 20"
+                  className="mt-1 text-sm"
+                />
+              </div>
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <Label className="text-xs text-slate-600">大カテゴリー</Label>
+                <Input value={form.mainCategory} onChange={(e) => setForm((f) => ({ ...f, mainCategory: e.target.value }))} placeholder="モバイル" className="mt-1 text-sm" />
+              </div>
+              <div>
+                <Label className="text-xs text-slate-600">小カテゴリー（任意）</Label>
+                <Input value={form.subCategory} onChange={(e) => setForm((f) => ({ ...f, subCategory: e.target.value }))} placeholder="iPhone" className="mt-1 text-sm" />
+              </div>
+            </div>
+            <Button size="sm" onClick={handleAdd} className="w-full text-xs">追加する</Button>
+          </CardContent>
+        </Card>
+      )}
+
+      {loading ? (
+        <div className="text-center py-8 text-sm text-slate-400">読み込み中...</div>
+      ) : settings.length === 0 ? (
+        <div className="text-center py-8 text-sm text-slate-400">設定がありません</div>
+      ) : (
+        <div className="rounded-md border border-slate-200 overflow-hidden">
+          <Table>
+            <TableHeader>
+              <TableRow className="bg-slate-50">
+                <TableHead className="text-xs text-slate-500">ブース</TableHead>
+                <TableHead className="text-xs text-slate-500">大カテゴリー</TableHead>
+                <TableHead className="text-xs text-slate-500">小カテゴリー</TableHead>
+                <TableHead className="text-xs text-slate-500">基準台数</TableHead>
+                <TableHead className="w-16" />
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {settings.map((s) => (
+                <TableRow key={s.id}>
+                  <TableCell className="text-sm text-slate-800">{boothName(s.boothId)}</TableCell>
+                  <TableCell className="text-xs text-slate-600">{s.mainCategory}</TableCell>
+                  <TableCell className="text-xs text-slate-600">{s.subCategory ?? '—'}</TableCell>
+                  <TableCell>
+                    {editingId === s.id ? (
+                      <div className="flex items-center gap-1">
+                        <Input
+                          type="number"
+                          min="0"
+                          value={editValue}
+                          onChange={(e) => setEditValue(e.target.value)}
+                          className="w-16 h-6 text-xs px-1"
+                          autoFocus
+                        />
+                        <button onClick={() => handleSaveThreshold(s.id)} className="text-xs text-blue-600">保存</button>
+                        <button onClick={() => setEditingId(null)} className="text-xs text-slate-400">×</button>
+                      </div>
+                    ) : (
+                      <button
+                        onClick={() => { setEditingId(s.id); setEditValue(String(s.threshold)) }}
+                        className="text-sm font-semibold text-slate-800 hover:text-blue-600 transition-colors"
+                        title="クリックで編集"
+                      >
+                        {s.threshold}
+                      </button>
+                    )}
+                  </TableCell>
+                  <TableCell>
+                    <button
+                      onClick={() => handleDelete(s.id)}
+                      className="text-xs text-slate-400 hover:text-red-600 transition-colors"
+                    >
+                      削除
+                    </button>
+                  </TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
         </div>
       )}
     </div>
@@ -438,10 +643,11 @@ function LogsTab() {
 // Main page
 // ----------------------------------------------------------------
 const TABS: { id: Tab; label: string }[] = [
-  { id: 'users',      label: 'ユーザー管理' },
-  { id: 'booths',     label: '販売ブース' },
-  { id: 'connection', label: '接続設定' },
-  { id: 'logs',       label: '操作ログ' },
+  { id: 'users',        label: 'ユーザー管理' },
+  { id: 'booths',       label: '販売ブース' },
+  { id: 'safety-stock', label: '安全在庫' },
+  { id: 'connection',   label: '接続設定' },
+  { id: 'logs',         label: '操作ログ' },
 ]
 
 export default function SettingsPage() {
@@ -454,18 +660,23 @@ export default function SettingsPage() {
           <h1 className="text-xl font-semibold text-slate-800">設定・管理</h1>
           <p className="text-xs text-slate-500 mt-1">ユーザーやシステム設定を管理します</p>
         </div>
-        <Link href="/import">
-          <Button size="sm" variant="outline" className="text-xs">販売実績インポート</Button>
-        </Link>
+        <div className="flex gap-2">
+          <Link href="/equipment">
+            <Button size="sm" variant="outline" className="text-xs">備品管理</Button>
+          </Link>
+          <Link href="/import">
+            <Button size="sm" variant="outline" className="text-xs">販売実績インポート</Button>
+          </Link>
+        </div>
       </div>
 
       {/* Tab bar */}
-      <div className="flex border-b border-slate-200 gap-0 overflow-x-auto">
+      <div className="flex border-b border-slate-200 gap-0 overflow-x-auto [&::-webkit-scrollbar]:hidden [-ms-overflow-style:none] [scrollbar-width:none]">
         {TABS.map((tab) => (
           <button
             key={tab.id}
             onClick={() => setActiveTab(tab.id)}
-            className={`px-4 py-2 text-xs font-medium whitespace-nowrap border-b-2 transition-colors ${
+            className={`shrink-0 px-4 py-2 text-xs font-medium whitespace-nowrap border-b-2 transition-colors ${
               activeTab === tab.id
                 ? 'border-slate-800 text-slate-800'
                 : 'border-transparent text-slate-500 hover:text-slate-700'
@@ -478,10 +689,11 @@ export default function SettingsPage() {
 
       {/* Tab content */}
       <div>
-        {activeTab === 'users'      && <UsersTab />}
-        {activeTab === 'booths'     && <BoothsTab />}
-        {activeTab === 'connection' && <ConnectionTab />}
-        {activeTab === 'logs'       && <LogsTab />}
+        {activeTab === 'users'        && <UsersTab />}
+        {activeTab === 'booths'       && <BoothsTab />}
+        {activeTab === 'safety-stock' && <SafetyStockTab />}
+        {activeTab === 'connection'   && <ConnectionTab />}
+        {activeTab === 'logs'         && <LogsTab />}
       </div>
     </div>
   )

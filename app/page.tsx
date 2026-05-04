@@ -4,8 +4,9 @@ import { useEffect, useState } from 'react'
 import Link from 'next/link'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { AlertBadge } from '@/components/inventory/StockAlert'
+import { ReplenishmentCard, type ReplenishmentGroupData } from '@/components/dashboard/ReplenishmentCard'
 import { maskImei } from '@/lib/imei'
-import type { SheetRow } from '@/types/inventory'
+import type { SheetRow, SafetyStockSetting, Booth } from '@/types/inventory'
 
 interface DashboardData {
   summary: {
@@ -29,6 +30,7 @@ interface DashboardData {
   }
 }
 
+
 const actions = [
   { href: '/inventory/checkout', label: '持ち出し登録', color: 'text-blue-600' },
   { href: '/inventory/sale',     label: '販売登録',     color: 'text-green-600' },
@@ -50,12 +52,57 @@ function SkeletonCard() {
 export default function DashboardPage() {
   const [data, setData] = useState<DashboardData | null>(null)
   const [error, setError] = useState(false)
+  const [retryCount, setRetryCount] = useState(0)
+  const [replenishment, setReplenishment] = useState<ReplenishmentGroupData[]>([])
 
   useEffect(() => {
+    setError(false)
+    setData(null)
     fetch('/api/dashboard')
       .then((r) => { if (!r.ok) throw new Error(); return r.json() })
       .then(setData)
       .catch(() => setError(true))
+  }, [retryCount])
+
+  useEffect(() => {
+    Promise.all([
+      fetch('/api/settings/safety-stock').then((r) => r.json()),
+      fetch('/api/settings/booths').then((r) => r.json()),
+      // 持ち出し中の端末（チームが現在保持している台数の算出に使う）
+      fetch('/api/sheets/inventory?status=checked_out').then((r) => r.json()),
+    ]).then(([ssData, boothData, invData]) => {
+      const settings: SafetyStockSetting[] = ssData.settings ?? []
+      const booths: Booth[] = boothData.booths ?? []
+      const devices: SheetRow[] = invData.devices ?? []
+
+      // チームごとにグループ化
+      const groupMap = new Map<string, ReplenishmentGroupData>()
+
+      for (const s of settings) {
+        const booth = booths.find((b) => b.id === s.boothId)
+        const boothName = booth?.name ?? s.boothId
+
+        const calculatedStock = devices.filter(
+          (d) =>
+            d.salesBooth === boothName &&
+            d.mainCategory === s.mainCategory &&
+            (!s.subCategory || d.subCategory === s.subCategory)
+        ).length
+        const currentStock = s.currentStock ?? calculatedStock
+
+        const needed = Math.max(0, s.threshold - currentStock)
+        const label = s.subCategory ? `${s.mainCategory} / ${s.subCategory}` : s.mainCategory
+
+        if (!groupMap.has(boothName)) {
+          groupMap.set(boothName, { boothName, categories: [], totalNeeded: 0 })
+        }
+        const group = groupMap.get(boothName)!
+        group.categories.push({ label, currentStock, threshold: s.threshold, needed })
+        group.totalNeeded += needed
+      }
+
+      setReplenishment(Array.from(groupMap.values()))
+    }).catch(() => {})
   }, [])
 
   const now = new Date()
@@ -72,8 +119,14 @@ export default function DashboardPage() {
 
       {/* Alert banner */}
       {error ? (
-        <div className="rounded-lg bg-slate-50 border border-slate-200 px-4 py-3 text-sm text-slate-500">
-          データを取得できませんでした
+        <div className="rounded-lg bg-slate-50 border border-slate-200 px-4 py-3 flex items-center justify-between">
+          <span className="text-sm text-slate-500">データを取得できませんでした</span>
+          <button
+            onClick={() => setRetryCount((c) => c + 1)}
+            className="text-xs text-slate-600 underline ml-3 shrink-0"
+          >
+            再読み込み
+          </button>
         </div>
       ) : !data ? null : data.alerts.total === 0 ? (
         <div className="rounded-lg bg-green-50 border border-green-200 px-4 py-3 flex items-center gap-2">
@@ -145,6 +198,27 @@ export default function DashboardPage() {
           )}
         </div>
       </section>
+
+      {/* Replenishment dashboard */}
+      {replenishment.length > 0 && (
+        <section>
+          <div className="flex items-center justify-between mb-2">
+            <div>
+              <p className="text-xs font-medium text-slate-500">チーム別補充状況</p>
+              <p className="text-xs text-slate-400 mt-0.5">
+                補充要: {replenishment.filter((g) => g.totalNeeded > 0).length} /
+                {replenishment.length} チーム
+              </p>
+            </div>
+            <Link href="/settings" className="text-xs text-slate-400 hover:text-slate-700">基準在庫を設定</Link>
+          </div>
+          <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 xl:grid-cols-3">
+            {replenishment.map((group) => (
+              <ReplenishmentCard key={group.boothName} {...group} />
+            ))}
+          </div>
+        </section>
+      )}
 
       {/* Today's activity */}
       {data && (

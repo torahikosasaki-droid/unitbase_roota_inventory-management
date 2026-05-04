@@ -86,7 +86,7 @@ export default function ReturnPage() {
             <textarea
               value={checkedOutInput}
               onChange={(e) => setCheckedOutInput(e.target.value)}
-              placeholder="123456789012345&#10;234567890123456"
+              placeholder={"持ち出したIMEIを入力\n例: 12345678901234\n12345678901235"}
               rows={3}
               className="mt-1 w-full text-xs font-mono rounded-md border border-input bg-background px-3 py-2 focus:outline-none focus:ring-2 focus:ring-ring resize-none"
             />

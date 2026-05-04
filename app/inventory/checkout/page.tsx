@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useCallback } from 'react'
+import { useState, useCallback, useEffect } from 'react'
 import { BarcodeScanner } from '@/components/scanner/BarcodeScanner'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -9,13 +9,22 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { maskImei } from '@/lib/imei'
 import { toast } from 'sonner'
+import type { Booth } from '@/types/inventory'
 
 export default function CheckoutPage() {
   const [staffName, setStaffName] = useState('')
   const [salesBooth, setSalesBooth] = useState('')
+  const [booths, setBooths] = useState<Booth[]>([])
   const [scannedImeis, setScannedImeis] = useState<string[]>([])
   const [scanning, setScanning] = useState(false)
   const [submitting, setSubmitting] = useState(false)
+
+  useEffect(() => {
+    fetch('/api/settings/booths')
+      .then((r) => r.json())
+      .then((d) => setBooths(d.booths ?? []))
+      .catch(() => {})
+  }, [])
 
   const handleScan = useCallback((imei: string) => {
     setScannedImeis((prev) => {
@@ -34,8 +43,10 @@ export default function CheckoutPage() {
 
   const handleSubmit = async () => {
     if (!staffName.trim()) { toast.error('担当者名を入力してください'); return }
-    if (!salesBooth.trim()) { toast.error('販売ブースを入力してください'); return }
+    if (!salesBooth.trim()) { toast.error('販売ブースを選択してください'); return }
     if (scannedImeis.length === 0) { toast.error('端末をスキャンしてください'); return }
+
+    if (!window.confirm(`${scannedImeis.length}台を「${salesBooth}」に持ち出し登録します。よろしいですか？`)) return
 
     setSubmitting(true)
     try {
@@ -89,12 +100,16 @@ export default function CheckoutPage() {
           </div>
           <div>
             <Label className="text-xs text-slate-600">販売ブース</Label>
-            <Input
+            <select
               value={salesBooth}
               onChange={(e) => setSalesBooth(e.target.value)}
-              placeholder="例：A"
-              className="mt-1 text-sm"
-            />
+              className="mt-1 w-full h-8 text-sm border border-input rounded-md px-2 bg-white focus:outline-none focus:ring-2 focus:ring-ring"
+            >
+              <option value="">ブースを選択してください</option>
+              {booths.map((b) => (
+                <option key={b.id} value={b.name}>{b.name}</option>
+              ))}
+            </select>
           </div>
         </CardContent>
       </Card>
@@ -134,6 +149,7 @@ export default function CheckoutPage() {
                   variant="outline"
                   className="font-mono text-xs cursor-pointer hover:bg-red-50 hover:border-red-300 hover:text-red-700"
                   onClick={() => removeImei(imei)}
+                  title="クリックで削除"
                 >
                   {maskImei(imei)} ✕
                 </Badge>

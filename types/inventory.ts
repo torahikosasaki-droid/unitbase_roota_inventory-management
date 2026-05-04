@@ -4,6 +4,8 @@ export type AlertType =
   | 'missing_risk'
   | null
 
+export type InventoryStatus = 'in_stock' | 'checked_out' | 'sold' | 'returned'
+
 export interface SheetRow {
   rowIndex: number
   imei: string
@@ -14,6 +16,9 @@ export interface SheetRow {
   returnedFlag: boolean
   soldDate: string | null
   alert: string | null
+  mainCategory: string | null
+  subCategory: string | null
+  deliveryDate: string | null
 }
 
 export interface SalesSession {
@@ -48,4 +53,24 @@ export interface AppUser {
 export interface Booth {
   id: string
   name: string
+}
+
+export interface SafetyStockSetting {
+  id: string
+  boothId: string
+  mainCategory: string
+  subCategory?: string
+  threshold: number
+  currentStock?: number
+}
+
+export interface Equipment {
+  id: string
+  name: string
+  category: string
+  purchaseMonth: string
+  condition: 'good' | 'damaged' | 'disposed'
+  notes: string | null
+  createdAt: string
+  updatedAt: string
 }

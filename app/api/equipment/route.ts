@@ -1,22 +1,11 @@
 import { NextResponse } from 'next/server'
 import { z } from 'zod'
-import { randomUUID } from 'crypto'
 import { getEquipmentList, saveEquipmentList } from '@/lib/data-store'
-
-const createSchema = z.object({
-  name: z.string().min(1),
-  category: z.string().min(1),
-  purchaseMonth: z.string().regex(/^\d{4}-\d{2}$/, '導入月はYYYY-MM形式です'),
-  condition: z.enum(['good', 'damaged', 'disposed']).default('good'),
-  notes: z.string().nullable().optional(),
-})
 
 const updateSchema = z.object({
   condition: z.enum(['good', 'damaged', 'disposed']).optional(),
+  currentTeam: z.string().nullable().optional(),
   notes: z.string().nullable().optional(),
-  name: z.string().min(1).optional(),
-  category: z.string().min(1).optional(),
-  purchaseMonth: z.string().regex(/^\d{4}-\d{2}$/).optional(),
 })
 
 function calcNeedsReview(purchaseMonth: string): boolean {
@@ -29,40 +18,27 @@ function calcNeedsReview(purchaseMonth: string): boolean {
 
 export function GET(request: Request) {
   const { searchParams } = new URL(request.url)
+  const categoryFilter = searchParams.get('category')
   const conditionFilter = searchParams.get('condition')
 
-  const list = getEquipmentList()
-  const filtered = conditionFilter
-    ? list.filter((e) => e.condition === conditionFilter)
-    : list.filter((e) => e.condition !== 'disposed')
+  let list = getEquipmentList()
 
-  const withReview = filtered.map((e) => ({
+  if (categoryFilter && categoryFilter !== 'all') {
+    list = list.filter((e) => e.category === categoryFilter)
+  }
+
+  if (conditionFilter && conditionFilter !== 'all') {
+    list = list.filter((e) => e.condition === conditionFilter)
+  } else if (!conditionFilter) {
+    list = list.filter((e) => e.condition !== 'disposed')
+  }
+
+  const withReview = list.map((e) => ({
     ...e,
     needsReview: e.condition !== 'disposed' && calcNeedsReview(e.purchaseMonth),
   }))
 
   return NextResponse.json({ equipment: withReview })
-}
-
-export async function POST(request: Request) {
-  const body = await request.json()
-  const parsed = createSchema.safeParse(body)
-  if (!parsed.success) {
-    return NextResponse.json({ error: '入力が不正です', details: parsed.error.flatten() }, { status: 400 })
-  }
-
-  const now = new Date().toISOString()
-  const item = {
-    id: randomUUID(),
-    ...parsed.data,
-    notes: parsed.data.notes ?? null,
-    createdAt: now,
-    updatedAt: now,
-  }
-
-  const list = getEquipmentList()
-  saveEquipmentList([...list, item])
-  return NextResponse.json({ equipment: item }, { status: 201 })
 }
 
 export async function PATCH(request: Request) {

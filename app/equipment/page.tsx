@@ -1,19 +1,22 @@
 'use client'
 
-import { useEffect, useState, useCallback } from 'react'
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
+import { useEffect, useState, useCallback, useRef } from 'react'
+import { Card, CardContent } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
+import { CategorySelector } from '@/components/equipment/CategorySelector'
 import { EquipmentTable } from '@/components/equipment/EquipmentTable'
 import { toast } from 'sonner'
+import type { EquipmentCategory } from '@/types/inventory'
 
 interface EquipmentItem {
   id: string
-  name: string
-  category: string
+  managementNumber: string
+  category: EquipmentCategory
   purchaseMonth: string
   condition: 'good' | 'damaged' | 'disposed'
+  currentTeam: string | null
   notes: string | null
   needsReview: boolean
 }
@@ -21,35 +24,36 @@ interface EquipmentItem {
 interface EditState {
   id: string
   condition: 'good' | 'damaged' | 'disposed'
+  currentTeam: string
   notes: string
+}
+
+interface ImportError {
+  row: number
+  managementNumber: string
+  reason: string
 }
 
 export default function EquipmentPage() {
   const [items, setItems] = useState<EquipmentItem[]>([])
   const [loading, setLoading] = useState(true)
-  const [showAddForm, setShowAddForm] = useState(false)
   const [editState, setEditState] = useState<EditState | null>(null)
+  const [categoryFilter, setCategoryFilter] = useState<EquipmentCategory | 'all'>('all')
   const [conditionFilter, setConditionFilter] = useState<'all' | 'good' | 'damaged' | 'disposed'>('all')
-
-  const [form, setForm] = useState<{
-    name: string
-    category: string
-    purchaseMonth: string
-    condition: 'good' | 'damaged' | 'disposed'
-    notes: string
-  }>({
-    name: '',
-    category: '',
-    purchaseMonth: '',
-    condition: 'good',
-    notes: '',
-  })
+  const [showImport, setShowImport] = useState(false)
+  const [csvFile, setCsvFile] = useState<File | null>(null)
+  const [importing, setImporting] = useState(false)
+  const [importErrors, setImportErrors] = useState<ImportError[]>([])
+  const fileInputRef = useRef<HTMLInputElement>(null)
 
   const load = useCallback(async () => {
     setLoading(true)
     try {
-      const q = conditionFilter !== 'all' ? `?condition=${conditionFilter}` : ''
-      const res = await fetch(`/api/equipment${q}`)
+      const params = new URLSearchParams()
+      if (categoryFilter !== 'all') params.set('category', categoryFilter)
+      if (conditionFilter !== 'all') params.set('condition', conditionFilter)
+      else params.set('condition', 'all')
+      const res = await fetch(`/api/equipment?${params}`)
       if (!res.ok) throw new Error()
       const data = await res.json()
       setItems(data.equipment)
@@ -58,39 +62,17 @@ export default function EquipmentPage() {
     } finally {
       setLoading(false)
     }
-  }, [conditionFilter])
+  }, [categoryFilter, conditionFilter])
 
   useEffect(() => { load() }, [load])
 
-  const handleAdd = async () => {
-    if (!form.name || !form.category || !form.purchaseMonth) {
-      toast.error('備品名・カテゴリー・導入月を入力してください')
-      return
-    }
-    try {
-      const res = await fetch('/api/equipment', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          name: form.name,
-          category: form.category,
-          purchaseMonth: form.purchaseMonth,
-          condition: form.condition,
-          notes: form.notes || null,
-        }),
-      })
-      if (!res.ok) throw new Error((await res.json()).error)
-      toast.success('備品を追加しました')
-      setForm({ name: '', category: '', purchaseMonth: '', condition: 'good', notes: '' })
-      setShowAddForm(false)
-      await load()
-    } catch (e) {
-      toast.error(e instanceof Error ? e.message : '追加に失敗しました')
-    }
-  }
-
-  const handleEdit = (id: string, condition: EquipmentItem['condition'], notes: string | null) => {
-    setEditState({ id, condition, notes: notes ?? '' })
+  const handleEdit = (
+    id: string,
+    condition: EquipmentItem['condition'],
+    currentTeam: string | null,
+    notes: string | null,
+  ) => {
+    setEditState({ id, condition, currentTeam: currentTeam ?? '', notes: notes ?? '' })
   }
 
   const handleSaveEdit = async () => {
@@ -101,6 +83,7 @@ export default function EquipmentPage() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           condition: editState.condition,
+          currentTeam: editState.currentTeam || null,
           notes: editState.notes || null,
         }),
       })
@@ -114,8 +97,8 @@ export default function EquipmentPage() {
   }
 
   const handleDispose = async (id: string) => {
-    const itemName = items.find((i) => i.id === id)?.name ?? '備品'
-    if (!window.confirm(`「${itemName}」を廃棄済みにしますか？`)) return
+    const item = items.find((i) => i.id === id)
+    if (!window.confirm(`「${item?.managementNumber ?? '備品'}」を廃棄済みにしますか？`)) return
     try {
       const res = await fetch(`/api/equipment?id=${id}`, { method: 'DELETE' })
       if (!res.ok) throw new Error()
@@ -126,14 +109,49 @@ export default function EquipmentPage() {
     }
   }
 
+  const handleImport = async () => {
+    if (!csvFile) {
+      toast.error('CSVファイルを選択してください')
+      return
+    }
+    setImporting(true)
+    setImportErrors([])
+    try {
+      const formData = new FormData()
+      formData.append('file', csvFile)
+      const res = await fetch('/api/equipment/import', { method: 'POST', body: formData })
+      const data = await res.json()
+      if (!res.ok) {
+        toast.error(data.error ?? 'インポートに失敗しました')
+        return
+      }
+      toast.success(`${data.added}件追加、${data.skipped}件スキップしました`)
+      if (data.errors?.length > 0) setImportErrors(data.errors)
+      setCsvFile(null)
+      if (fileInputRef.current) fileInputRef.current.value = ''
+      setShowImport(false)
+      await load()
+    } catch {
+      toast.error('インポートに失敗しました')
+    } finally {
+      setImporting(false)
+    }
+  }
+
   const needsReviewCount = items.filter((i) => i.needsReview).length
 
   return (
     <div className="flex flex-col gap-5">
       {/* Edit dialog */}
       {editState && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40" onClick={() => setEditState(null)}>
-          <div className="bg-white rounded-xl shadow-xl p-5 w-72 flex flex-col gap-4" onClick={(e) => e.stopPropagation()}>
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/40"
+          onClick={() => setEditState(null)}
+        >
+          <div
+            className="bg-white rounded-xl shadow-xl p-5 w-80 flex flex-col gap-4"
+            onClick={(e) => e.stopPropagation()}
+          >
             <p className="text-sm font-semibold text-slate-800">備品を編集</p>
             <div>
               <Label className="text-xs text-slate-600">状態</Label>
@@ -154,6 +172,15 @@ export default function EquipmentPage() {
               </div>
             </div>
             <div>
+              <Label className="text-xs text-slate-600">使用チーム</Label>
+              <Input
+                value={editState.currentTeam}
+                onChange={(e) => setEditState((s) => s ? { ...s, currentTeam: e.target.value } : null)}
+                placeholder="チーム名（未割当の場合は空欄）"
+                className="mt-1 text-sm"
+              />
+            </div>
+            <div>
               <Label className="text-xs text-slate-600">メモ</Label>
               <Input
                 value={editState.notes}
@@ -163,13 +190,18 @@ export default function EquipmentPage() {
               />
             </div>
             <div className="flex gap-2">
-              <Button variant="outline" size="sm" onClick={() => setEditState(null)} className="text-xs flex-1">キャンセル</Button>
-              <Button size="sm" onClick={handleSaveEdit} className="text-xs flex-1">保存</Button>
+              <Button variant="outline" size="sm" onClick={() => setEditState(null)} className="text-xs flex-1">
+                キャンセル
+              </Button>
+              <Button size="sm" onClick={handleSaveEdit} className="text-xs flex-1">
+                保存
+              </Button>
             </div>
           </div>
         </div>
       )}
 
+      {/* Header */}
       <div className="flex items-start justify-between">
         <div>
           <h1 className="text-xl font-semibold text-slate-800">備品管理</h1>
@@ -177,54 +209,55 @@ export default function EquipmentPage() {
             <p className="text-xs text-amber-600 mt-0.5">要確認: {needsReviewCount}件（導入から6ヶ月以上）</p>
           )}
         </div>
-        <Button size="sm" className="text-xs" onClick={() => setShowAddForm(!showAddForm)}>
-          {showAddForm ? 'キャンセル' : '+ 備品を追加'}
+        <Button size="sm" className="text-xs" onClick={() => { setShowImport(!showImport); setImportErrors([]) }}>
+          {showImport ? 'キャンセル' : 'CSVインポート'}
         </Button>
       </div>
 
-      {showAddForm && (
+      {/* CSV import panel */}
+      {showImport && (
         <Card className="border-slate-200 bg-slate-50">
           <CardContent className="px-4 pt-4 pb-4 flex flex-col gap-3">
-            <div className="grid grid-cols-2 gap-3">
-              <div>
-                <Label className="text-xs text-slate-600">備品名</Label>
-                <Input value={form.name} onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))} placeholder="折りたたみ机" className="mt-1 text-sm" />
-              </div>
-              <div>
-                <Label className="text-xs text-slate-600">カテゴリー</Label>
-                <Input value={form.category} onChange={(e) => setForm((f) => ({ ...f, category: e.target.value }))} placeholder="家具" className="mt-1 text-sm" />
-              </div>
-            </div>
-            <div className="grid grid-cols-2 gap-3">
-              <div>
-                <Label className="text-xs text-slate-600">導入月</Label>
-                <Input type="month" value={form.purchaseMonth} onChange={(e) => setForm((f) => ({ ...f, purchaseMonth: e.target.value }))} className="mt-1 text-sm" />
-              </div>
-              <div>
-                <Label className="text-xs text-slate-600">状態</Label>
-                <div className="flex gap-1 mt-1">
-                  {(['good', 'damaged'] as const).map((c) => (
-                    <button
-                      key={c}
-                      onClick={() => setForm((f) => ({ ...f, condition: c }))}
-                      className={`px-2 py-1 rounded text-xs border transition-colors ${form.condition === c ? 'bg-slate-800 text-white border-slate-800' : 'bg-white text-slate-600 border-slate-200'}`}
-                    >
-                      {c === 'good' ? '良好' : '破損'}
-                    </button>
-                  ))}
-                </div>
-              </div>
-            </div>
+            <p className="text-xs text-slate-600 font-medium">CSVフォーマット（1行目はヘッダー）</p>
+            <pre className="text-xs text-slate-500 bg-white border border-slate-200 rounded p-2 overflow-x-auto">
+{`管理番号,カテゴリー,導入月,状態,使用チーム,メモ
+机-003,折りたたみ机,2026-03,good,チームA,ブースC用
+椅子-003,パイプ椅子,2026-03,good,,`}
+            </pre>
+            <p className="text-xs text-slate-400">
+              状態: good / damaged / disposed（省略時は good）。使用チーム・メモは任意。
+            </p>
             <div>
-              <Label className="text-xs text-slate-600">メモ（任意）</Label>
-              <Input value={form.notes} onChange={(e) => setForm((f) => ({ ...f, notes: e.target.value }))} placeholder="備考" className="mt-1 text-sm" />
+              <Label className="text-xs text-slate-600">CSVファイルを選択</Label>
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept=".csv"
+                onChange={(e) => setCsvFile(e.target.files?.[0] ?? null)}
+                className="mt-1 block w-full text-xs text-slate-600 file:mr-3 file:py-1 file:px-3 file:rounded file:border file:border-slate-200 file:text-xs file:bg-white file:text-slate-700 hover:file:border-slate-400"
+              />
             </div>
-            <Button size="sm" onClick={handleAdd} className="w-full text-xs">追加する</Button>
+            <Button size="sm" onClick={handleImport} disabled={importing || !csvFile} className="w-full text-xs">
+              {importing ? 'インポート中...' : 'インポート実行'}
+            </Button>
+            {importErrors.length > 0 && (
+              <div className="rounded border border-amber-200 bg-amber-50 p-3 flex flex-col gap-1">
+                <p className="text-xs font-medium text-amber-700">スキップされた行:</p>
+                {importErrors.map((e) => (
+                  <p key={e.row} className="text-xs text-amber-600">
+                    行{e.row} [{e.managementNumber}] — {e.reason}
+                  </p>
+                ))}
+              </div>
+            )}
           </CardContent>
         </Card>
       )}
 
-      {/* Filter */}
+      {/* Category selector */}
+      <CategorySelector selected={categoryFilter} onChange={setCategoryFilter} />
+
+      {/* Condition filter */}
       <div className="flex gap-1">
         {([['all', 'すべて'], ['good', '良好'], ['damaged', '破損'], ['disposed', '廃棄済み']] as const).map(([val, label]) => (
           <button

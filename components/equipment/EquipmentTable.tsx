@@ -5,17 +5,18 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 
 interface EquipmentRow {
   id: string
-  name: string
+  managementNumber: string
   category: string
   purchaseMonth: string
   condition: 'good' | 'damaged' | 'disposed'
+  currentTeam: string | null
   notes: string | null
   needsReview: boolean
 }
 
 interface Props {
   items: EquipmentRow[]
-  onEdit: (id: string, condition: EquipmentRow['condition'], notes: string | null) => void
+  onEdit: (id: string, condition: EquipmentRow['condition'], currentTeam: string | null, notes: string | null) => void
   onDispose: (id: string) => void
 }
 
@@ -37,8 +38,9 @@ export function EquipmentTable({ items, onEdit, onDispose }: Props) {
       <Table>
         <TableHeader>
           <TableRow className="bg-slate-50">
-            <TableHead className="text-xs text-slate-500">備品名</TableHead>
+            <TableHead className="text-xs text-slate-500">管理番号</TableHead>
             <TableHead className="text-xs text-slate-500 hidden sm:table-cell">カテゴリー</TableHead>
+            <TableHead className="text-xs text-slate-500 hidden sm:table-cell">使用チーム</TableHead>
             <TableHead className="text-xs text-slate-500">導入月</TableHead>
             <TableHead className="text-xs text-slate-500 hidden sm:table-cell">経過月数</TableHead>
             <TableHead className="text-xs text-slate-500">状態</TableHead>
@@ -54,13 +56,14 @@ export function EquipmentTable({ items, onEdit, onDispose }: Props) {
                 key={item.id}
                 className={item.needsReview ? 'bg-amber-50' : undefined}
               >
-                <TableCell className="text-sm text-slate-800">
-                  <span>{item.name}</span>
+                <TableCell className="text-sm font-mono text-slate-800">
+                  {item.managementNumber}
                   {item.needsReview && (
-                    <span className="ml-1 text-xs text-amber-600 font-medium">要確認</span>
+                    <span className="ml-1.5 text-xs text-amber-600 font-medium font-sans">要確認</span>
                   )}
                 </TableCell>
                 <TableCell className="text-xs text-slate-600 hidden sm:table-cell">{item.category}</TableCell>
+                <TableCell className="text-xs text-slate-600 hidden sm:table-cell">{item.currentTeam ?? '—'}</TableCell>
                 <TableCell className="text-xs text-slate-600">{item.purchaseMonth}</TableCell>
                 <TableCell className="text-xs text-slate-600 hidden sm:table-cell">{months}ヶ月</TableCell>
                 <TableCell>{conditionBadge(item.condition)}</TableCell>
@@ -68,7 +71,7 @@ export function EquipmentTable({ items, onEdit, onDispose }: Props) {
                 <TableCell>
                   <div className="flex gap-2">
                     <button
-                      onClick={() => onEdit(item.id, item.condition, item.notes)}
+                      onClick={() => onEdit(item.id, item.condition, item.currentTeam, item.notes)}
                       className="text-xs text-slate-400 hover:text-blue-600 transition-colors"
                     >
                       編集
@@ -88,7 +91,7 @@ export function EquipmentTable({ items, onEdit, onDispose }: Props) {
           })}
           {items.length === 0 && (
             <TableRow>
-              <TableCell colSpan={7} className="text-center text-sm text-slate-400 py-8">
+              <TableCell colSpan={8} className="text-center text-sm text-slate-400 py-8">
                 備品が登録されていません
               </TableCell>
             </TableRow>

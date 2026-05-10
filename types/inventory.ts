@@ -64,12 +64,28 @@ export interface SafetyStockSetting {
   currentStock?: number
 }
 
+export const EQUIPMENT_CATEGORIES = [
+  '折りたたみ机',
+  'パイプ椅子',
+  'ホワイトボード',
+  'プロジェクター',
+  '電源タップ',
+  'LANケーブル',
+  'バーコードスキャナー',
+  'ポップスタンド',
+  'モバイルルーター',
+  'その他',
+] as const
+
+export type EquipmentCategory = typeof EQUIPMENT_CATEGORIES[number]
+
 export interface Equipment {
   id: string
-  name: string
-  category: string
+  managementNumber: string
+  category: EquipmentCategory
   purchaseMonth: string
   condition: 'good' | 'damaged' | 'disposed'
+  currentTeam: string | null
   notes: string | null
   createdAt: string
   updatedAt: string
